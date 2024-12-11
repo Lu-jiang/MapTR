@@ -924,14 +924,14 @@ class CustomNuScenesLocalMapDataset(CustomNuScenesDataset):
         self.overlap_test = overlap_test
         self.bev_size = bev_size
 
-        self.MAPCLASSES = self.get_map_classes(map_classes)
-        self.NUM_MAPCLASSES = len(self.MAPCLASSES)
-        self.pc_range = pc_range
-        patch_h = pc_range[4]-pc_range[1]
-        patch_w = pc_range[3]-pc_range[0]
+        self.MAPCLASSES = self.get_map_classes(map_classes)     # divider ped_crossing boundary
+        self.NUM_MAPCLASSES = len(self.MAPCLASSES)              # 3
+        self.pc_range = pc_range                                # [-15, +15], [-30, +30]
+        patch_h = pc_range[4]-pc_range[1]                       # 60
+        patch_w = pc_range[3]-pc_range[0]                       # 30
         self.patch_size = (patch_h, patch_w)
         self.padding_value = padding_value
-        self.fixed_num = fixed_ptsnum_per_line
+        self.fixed_num = fixed_ptsnum_per_line                  # 20
         self.eval_use_same_gt_sample_num_flag = eval_use_same_gt_sample_num_flag
         self.vector_map = VectorizedLocalMap(kwargs['data_root'], 
                             patch_size=self.patch_size, map_classes=self.MAPCLASSES, 

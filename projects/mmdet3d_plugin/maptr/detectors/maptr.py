@@ -17,21 +17,21 @@ class MapTR(MVXTwoStageDetector):
     """
 
     def __init__(self,
-                 use_grid_mask=False,
-                 pts_voxel_layer=None,
-                 pts_voxel_encoder=None,
-                 pts_middle_encoder=None,
-                 pts_fusion_layer=None,
-                 img_backbone=None,
-                 pts_backbone=None,
-                 img_neck=None,
-                 pts_neck=None,
+                 use_grid_mask=False,       # 是否使用GridMask数据增强
+                 pts_voxel_layer=None,      # 点云的体素化层
+                 pts_voxel_encoder=None,    # 点云的体素编码器
+                 pts_middle_encoder=None,   # 点云的中间编码器
+                 pts_fusion_layer=None,     # 点云的融合层
+                 img_backbone=None,         # 图像的主干网络: resnet50
+                 pts_backbone=None,         # 点云的主干网络
+                 img_neck=None,             # 图像的特征融合层: fpn
+                 pts_neck=None,             # 点云的特征融合层
                  pts_bbox_head=None,
                  img_roi_head=None,
                  img_rpn_head=None,
-                 train_cfg=None,
-                 test_cfg=None,
-                 pretrained=None,
+                 train_cfg=None,            # 训练配置
+                 test_cfg=None,             # 测试配置
+                 pretrained=None,           # 预训练模型路径
                  video_test_mode=False,
                  modality='vision',
                  lidar_encoder=None,
@@ -72,7 +72,7 @@ class MapTR(MVXTwoStageDetector):
 
 
     def extract_img_feat(self, img, img_metas, len_queue=None):
-        """Extract features of images."""
+        """Extract features of images."""   # img=torch.Size([4, 6, 3, 480, 800]); len(img_metas)=4
         B = img.size(0)
         if img is not None:
             
@@ -85,31 +85,31 @@ class MapTR(MVXTwoStageDetector):
                 img.squeeze_()
             elif img.dim() == 5 and img.size(0) > 1:
                 B, N, C, H, W = img.size()
-                img = img.reshape(B * N, C, H, W)
+                img = img.reshape(B * N, C, H, W)   # torch.Size([24, 3, 480, 800])
             if self.use_grid_mask:
-                img = self.grid_mask(img)
+                img = self.grid_mask(img)   # torch.Size([24, 3, 480, 800])
 
-            img_feats = self.img_backbone(img)
+            img_feats = self.img_backbone(img)  # img_feats[0].shape=torch.Size([24, 2048, 15, 25]), after resnet
             if isinstance(img_feats, dict):
                 img_feats = list(img_feats.values())
         else:
             return None
         if self.with_img_neck:
-            img_feats = self.img_neck(img_feats)
+            img_feats = self.img_neck(img_feats)    # # img_feats[0].shape=torch.Size([24, 256, 15, 25]), after fpn
 
         img_feats_reshaped = []
         for img_feat in img_feats:
             BN, C, H, W = img_feat.size()
-            if len_queue is not None:
+            if len_queue is not None:   # None
                 img_feats_reshaped.append(img_feat.view(int(B/len_queue), len_queue, int(BN / B), C, H, W))
             else:
-                img_feats_reshaped.append(img_feat.view(B, int(BN / B), C, H, W))
+                img_feats_reshaped.append(img_feat.view(B, int(BN / B), C, H, W))   # torch.Size([4, 6, 256, 15, 25])
         return img_feats_reshaped
 
     @auto_fp16(apply_to=('img'), out_fp32=True)
     def extract_feat(self, img, img_metas=None, len_queue=None):
         """Extract features from images and points."""
-
+        # img: torch.Size([4, 6, 3, 480, 800])
         img_feats = self.extract_img_feat(img, img_metas, len_queue=len_queue)
         
         return img_feats
@@ -238,24 +238,24 @@ class MapTR(MVXTwoStageDetector):
                       ):
         """Forward training function.
         Args:
-            points (list[torch.Tensor], optional): Points of each sample.
+            points (list[torch.Tensor], optional): Points of each sample. 每个样本的点云信息
                 Defaults to None.
-            img_metas (list[dict], optional): Meta information of each sample.
+            img_metas (list[dict], optional): Meta information of each sample. 每个样本的图像元信息
                 Defaults to None.
-            gt_bboxes_3d (list[:obj:`BaseInstance3DBoxes`], optional):
+            gt_bboxes_3d (list[:obj:`BaseInstance3DBoxes`], optional):  真实的3D边界框信息
                 Ground truth 3D boxes. Defaults to None.
             gt_labels_3d (list[torch.Tensor], optional): Ground truth labels
-                of 3D boxes. Defaults to None.
+                of 3D boxes. Defaults to None.  对应3D边界框的真实标签
             gt_labels (list[torch.Tensor], optional): Ground truth labels
-                of 2D boxes in images. Defaults to None.
+                of 2D boxes in images. Defaults to None. 图像中的2D边界框的真实标签
             gt_bboxes (list[torch.Tensor], optional): Ground truth 2D boxes in
-                images. Defaults to None.
+                images. Defaults to None. 图像中的2D边界框的边界框坐标
             img (torch.Tensor optional): Images of each sample with shape
-                (N, C, H, W). Defaults to None.
+                (N, C, H, W). Defaults to None. 输入的图像数据张量
             proposals ([list[torch.Tensor], optional): Predicted proposals
-                used for training Fast RCNN. Defaults to None.
+                used for training Fast RCNN. Defaults to None. 用于存放预测的proposal框
             gt_bboxes_ignore (list[torch.Tensor], optional): Ground truth
-                2D boxes in images to be ignored. Defaults to None.
+                2D boxes in images to be ignored. Defaults to None. 用来指定图像中需要被忽略的 2D 边界框
         Returns:
             dict: Losses of different branches.
         """
@@ -263,19 +263,19 @@ class MapTR(MVXTwoStageDetector):
         if self.modality == 'fusion':
             lidar_feat = self.extract_lidar_feat(points)
         
-        len_queue = img.size(1)
-        prev_img = img[:, :-1, ...]
-        img = img[:, -1, ...]
+        len_queue = img.size(1) # img.shape=torch.Size([4, 1, 6, 3, 480, 800]), n个连续时间步的图像序列, n=1
+        prev_img = img[:, :-1, ...] # torch.Size([4, 0, 6, 3, 480, 800]), 表示历史图像
+        img = img[:, -1, ...]   # img: torch.Size([4, 6, 3, 480, 800]), 表示当前图像
 
         prev_img_metas = copy.deepcopy(img_metas)
         # prev_bev = self.obtain_history_bev(prev_img, prev_img_metas)
         # import pdb;pdb.set_trace()
-        prev_bev = self.obtain_history_bev(prev_img, prev_img_metas) if len_queue>1 else None
+        prev_bev = self.obtain_history_bev(prev_img, prev_img_metas) if len_queue>1 else None   # None 
         
         img_metas = [each[len_queue-1] for each in img_metas]
         if not img_metas[0]['prev_bev_exists']:
             prev_bev = None
-        img_feats = self.extract_feat(img=img, img_metas=img_metas)
+        img_feats = self.extract_feat(img=img, img_metas=img_metas) # img_feats[0].shape=torch.Size([4, 6, 256, 15, 25])
         losses = dict()
         losses_pts = self.forward_pts_train(img_feats, lidar_feat, gt_bboxes_3d,
                                             gt_labels_3d, img_metas,

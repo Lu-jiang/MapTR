@@ -21,6 +21,7 @@ def build_dataset(cfg, default_args=None):
     from mmdet3d.datasets.dataset_wrappers import CBGSDataset
     from mmdet.datasets.dataset_wrappers import (ClassBalancedDataset,
                                                  ConcatDataset, RepeatDataset)
+    # maptr, dict, type='CustomNuScenesLocalMapDataset'
     if isinstance(cfg, (list, tuple)):
         dataset = ConcatDataset([build_dataset(c, default_args) for c in cfg])
     elif cfg['type'] == 'ConcatDataset':

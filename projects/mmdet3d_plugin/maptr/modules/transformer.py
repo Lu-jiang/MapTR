@@ -85,9 +85,9 @@ class MapTRPerceptionTransformer(BaseModule):
     def init_layers(self):
         """Initialize layers of the Detr3DTransformer."""
         self.level_embeds = nn.Parameter(torch.Tensor(
-            self.num_feature_levels, self.embed_dims))
+            self.num_feature_levels, self.embed_dims))  # torch.Size([4, 256]), 区分不同层级特征
         self.cams_embeds = nn.Parameter(
-            torch.Tensor(self.num_cams, self.embed_dims))
+            torch.Tensor(self.num_cams, self.embed_dims))   # torch.Size([6, 256]), 相机 embeds，用于区分不同相机来源的特征
         self.reference_points = nn.Linear(self.embed_dims, 2) # TODO, this is a hack
         self.can_bus_mlp = nn.Sequential(
             nn.Linear(self.len_can_bus, self.embed_dims // 2),
@@ -123,24 +123,24 @@ class MapTRPerceptionTransformer(BaseModule):
             bev_h,
             bev_w,
             grid_length=[0.512, 0.512],
-            bev_pos=None,
+            bev_pos=None,   # torch.Size([4, 256, 200, 100])
             prev_bev=None,
             **kwargs):
         bs = mlvl_feats[0].size(0)
-        bev_queries = bev_queries.unsqueeze(1).repeat(1, bs, 1)
-        bev_pos = bev_pos.flatten(2).permute(2, 0, 1)
+        bev_queries = bev_queries.unsqueeze(1).repeat(1, bs, 1) # torch.Size([20000, 4, 256])
+        bev_pos = bev_pos.flatten(2).permute(2, 0, 1)           # torch.Size([20000, 4, 256])
 
-        # obtain rotation angle and shift with ego motion
+        # obtain rotation angle and shift with ego motion 将车辆运动信息融入到后续的 BEV 特征生成过程中
         delta_x = np.array([each['can_bus'][0]
-                           for each in kwargs['img_metas']])
+                           for each in kwargs['img_metas']])    # (4)每个sample img_metas中can_bus下的x方向位移
         delta_y = np.array([each['can_bus'][1]
-                           for each in kwargs['img_metas']])
+                           for each in kwargs['img_metas']])    # y方向位移
         ego_angle = np.array(
-            [each['can_bus'][-2] / np.pi * 180 for each in kwargs['img_metas']])
+            [each['can_bus'][-2] / np.pi * 180 for each in kwargs['img_metas']])    # 车辆自身角度
         grid_length_y = grid_length[0]
         grid_length_x = grid_length[1]
-        translation_length = np.sqrt(delta_x ** 2 + delta_y ** 2)
-        translation_angle = np.arctan2(delta_y, delta_x) / np.pi * 180
+        translation_length = np.sqrt(delta_x ** 2 + delta_y ** 2)       # 车辆的平移长度
+        translation_angle = np.arctan2(delta_y, delta_x) / np.pi * 180  # 平移角度
         bev_angle = ego_angle - translation_angle
         shift_y = translation_length * \
             np.cos(bev_angle / 180 * np.pi) / grid_length_y / bev_h
@@ -149,7 +149,7 @@ class MapTRPerceptionTransformer(BaseModule):
         shift_y = shift_y * self.use_shift
         shift_x = shift_x * self.use_shift
         shift = bev_queries.new_tensor(
-            [shift_x, shift_y]).permute(1, 0)  # xy, bs -> bs, xy
+            [shift_x, shift_y]).permute(1, 0)  # xy, bs -> bs, xy   torch.Size([4, 2])
 
         if prev_bev is not None:
             if prev_bev.shape[1] == bev_h * bev_w:
@@ -166,35 +166,35 @@ class MapTRPerceptionTransformer(BaseModule):
                         bev_h * bev_w, 1, -1)
                     prev_bev[:, i] = tmp_prev_bev[:, 0]
 
-        # add can bus signals
+        # add can bus signals，把车辆的状态信号信息融入到 bev queries
         can_bus = bev_queries.new_tensor(
-            [each['can_bus'] for each in kwargs['img_metas']])  # [:, :]
-        can_bus = self.can_bus_mlp(can_bus[:, :self.len_can_bus])[None, :, :]
+            [each['can_bus'] for each in kwargs['img_metas']])  # [:, :]    torch.Size([4, 18])
+        can_bus = self.can_bus_mlp(can_bus[:, :self.len_can_bus])[None, :, :]   # torch.Size([1, 4, 256]), [None, :, :] -> unsqueeze(0)
         bev_queries = bev_queries + can_bus * self.use_can_bus
 
         feat_flatten = []
         spatial_shapes = []
-        for lvl, feat in enumerate(mlvl_feats):
-            bs, num_cam, c, h, w = feat.shape
+        for lvl, feat in enumerate(mlvl_feats): # len=1
+            bs, num_cam, c, h, w = feat.shape   # torch.Size([4, 6, 256, 15, 25])
             spatial_shape = (h, w)
-            feat = feat.flatten(3).permute(1, 0, 3, 2)
+            feat = feat.flatten(3).permute(1, 0, 3, 2)  # torch.Size([6, 4, 375, 256])
             if self.use_cams_embeds:
                 feat = feat + self.cams_embeds[:, None, None, :].to(feat.dtype)
             feat = feat + self.level_embeds[None,
                                             None, lvl:lvl + 1, :].to(feat.dtype)
-            spatial_shapes.append(spatial_shape)
+            spatial_shapes.append(spatial_shape)    # 记录了各层级特征图的空间形状信息 hw
             feat_flatten.append(feat)
 
-        feat_flatten = torch.cat(feat_flatten, 2)
+        feat_flatten = torch.cat(feat_flatten, 2)   # torch.Size([6, 4, 375, 256]), 融合了lvl多层级信息
         spatial_shapes = torch.as_tensor(
             spatial_shapes, dtype=torch.long, device=bev_pos.device)
         level_start_index = torch.cat((spatial_shapes.new_zeros(
             (1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
 
         feat_flatten = feat_flatten.permute(
-            0, 2, 1, 3)  # (num_cam, H*W, bs, embed_dims)
+            0, 2, 1, 3)  # (num_cam, H*W, bs, embed_dims)   # torch.Size([6, 375, 4, 256])
 
-        bev_embed = self.encoder(
+        bev_embed = self.encoder(   # projects/mmdet3d_plugin/bevformer/modules/encoder.py
             bev_queries,
             feat_flatten,
             feat_flatten,
@@ -207,7 +207,7 @@ class MapTRPerceptionTransformer(BaseModule):
             shift=shift,
             **kwargs
         )
-        return bev_embed
+        return bev_embed    # torch.Size([4, 20000, 256])
 
     def lss_bev_encode(
             self,
@@ -237,7 +237,7 @@ class MapTRPerceptionTransformer(BaseModule):
         """
         obtain bev features.
         """
-        if self.use_attn_bev:
+        if self.use_attn_bev:   # maptr v1 use.
             bev_embed = self.attn_bev_encode(
                 mlvl_feats,
                 bev_queries,
@@ -281,14 +281,14 @@ class MapTRPerceptionTransformer(BaseModule):
         Args:
             mlvl_feats (list(Tensor)): Input queries from
                 different level. Each element has shape
-                [bs, num_cams, embed_dims, h, w].
-            bev_queries (Tensor): (bev_h*bev_w, c)
-            bev_pos (Tensor): (bs, embed_dims, bev_h, bev_w)
+                [bs, num_cams, embed_dims, h, w].   torch.Size([4, 6, 256, 15, 25])
+            bev_queries (Tensor): (bev_h*bev_w, c)  torch.Size([20000, 256])
+            bev_pos (Tensor): (bs, embed_dims, bev_h, bev_w)    torch.Size([4, 256, 200, 100])
             object_query_embed (Tensor): The query embedding for decoder,
-                with shape [num_query, c].
+                with shape [num_query, c].  torch.Size([1000, 512]), 50 * 20
             reg_branches (obj:`nn.ModuleList`): Regression heads for
                 feature maps from each decoder layer. Only would
-                be passed when `with_box_refine` is True. Default to None.
+                be passed when `with_box_refine` is True. Default to None.  out channel 2
         Returns:
             tuple[Tensor]: results of decoder containing the following tensor.
                 - bev_embed: BEV features
@@ -323,20 +323,20 @@ class MapTRPerceptionTransformer(BaseModule):
             grid_length=grid_length,
             bev_pos=bev_pos,
             prev_bev=prev_bev,
-            **kwargs)  # bev_embed shape: bs, bev_h*bev_w, embed_dims
+            **kwargs)  # bev_embed shape: bs, bev_h*bev_w, embed_dims torch.Size([4, 20000, 256])
 
         bs = mlvl_feats[0].size(0)
         query_pos, query = torch.split(
-            object_query_embed, self.embed_dims, dim=1)
-        query_pos = query_pos.unsqueeze(0).expand(bs, -1, -1)
-        query = query.unsqueeze(0).expand(bs, -1, -1)
-        reference_points = self.reference_points(query_pos)
+            object_query_embed, self.embed_dims, dim=1) # torch.Size([1000, 512]) : 256 = torch.Size([1000, 256])
+        query_pos = query_pos.unsqueeze(0).expand(bs, -1, -1)   # torch.Size([4, 1000, 256])
+        query = query.unsqueeze(0).expand(bs, -1, -1)           # torch.Size([4, 1000, 256])
+        reference_points = self.reference_points(query_pos)     # torch.Size([4, 1000, 2])
         reference_points = reference_points.sigmoid()
-        init_reference_out = reference_points
+        init_reference_out = reference_points   # 初始 xy
 
-        query = query.permute(1, 0, 2)
-        query_pos = query_pos.permute(1, 0, 2)
-        bev_embed = bev_embed.permute(1, 0, 2)
+        query = query.permute(1, 0, 2)          # torch.Size([1000, 4, 256])
+        query_pos = query_pos.permute(1, 0, 2)  # torch.Size([1000, 4, 256])
+        bev_embed = bev_embed.permute(1, 0, 2)  # torch.Size([20000, 4, 256])
 
         inter_states, inter_references = self.decoder(
             query=query,
@@ -350,6 +350,6 @@ class MapTRPerceptionTransformer(BaseModule):
             level_start_index=torch.tensor([0], device=query.device),
             **kwargs)
 
-        inter_references_out = inter_references
+        inter_references_out = inter_references # torch.Size([6, 4, 1000, 2])
 
         return bev_embed, inter_states, init_reference_out, inter_references_out

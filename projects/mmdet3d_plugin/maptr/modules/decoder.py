@@ -27,25 +27,25 @@ class MapTRDecoder(TransformerLayerSequence):
         """Forward function for `Detr3DTransformerDecoder`.
         Args:
             query (Tensor): Input query with shape
-                `(num_query, bs, embed_dims)`.
+                `(num_query, bs, embed_dims)`.  torch.Size([1000, 4, 256])
             reference_points (Tensor): The reference
                 points of offset. has shape
                 (bs, num_query, 4) when as_two_stage,
-                otherwise has shape ((bs, num_query, 2).
+                otherwise has shape ((bs, num_query, 2). torch.Size([4, 1000, 2]) 在 decoder迭代过程中不断更新
             reg_branch: (obj:`nn.ModuleList`): Used for
                 refining the regression results. Only would
                 be passed when with_box_refine is True,
-                otherwise would be passed a `None`.
+                otherwise would be passed a `None`. 对回归结果进行细化, out channel=2
         Returns:
             Tensor: Results with shape [1, num_query, bs, embed_dims] when
                 return_intermediate is `False`, otherwise it has shape
                 [num_layers, num_query, bs, embed_dims].
         """
         output = query
-        intermediate = []
-        intermediate_reference_points = []
-        for lid, layer in enumerate(self.layers):
-
+        intermediate = []                           # 存储中间层的输出特征
+        intermediate_reference_points = []          # 存储对应的中间参考点信息
+        for lid, layer in enumerate(self.layers):   # 6
+            # torch.Size([4, 1000, 2]) -> torch.Size([4, 1000, 1, 2])
             reference_points_input = reference_points[..., :2].unsqueeze(
                 2)  # BS NUM_QUERY NUM_LEVEL 2
             output = layer(
@@ -54,10 +54,10 @@ class MapTRDecoder(TransformerLayerSequence):
                 reference_points=reference_points_input,
                 key_padding_mask=key_padding_mask,
                 **kwargs)
-            output = output.permute(1, 0, 2)
+            output = output.permute(1, 0, 2)    # torch.Size([1000, 4, 256]) -> torch.Size([4, 1000, 256])
 
             if reg_branches is not None:
-                tmp = reg_branches[lid](output)
+                tmp = reg_branches[lid](output) # torch.Size([4, 1000, 2]) xy
 
                 assert reference_points.shape[-1] == 2
 
@@ -71,14 +71,14 @@ class MapTRDecoder(TransformerLayerSequence):
 
                 reference_points = new_reference_points.detach()
 
-            output = output.permute(1, 0, 2)
+            output = output.permute(1, 0, 2)    # torch.Size([1000, 4, 256])
             if self.return_intermediate:
                 intermediate.append(output)
                 intermediate_reference_points.append(reference_points)
 
         if self.return_intermediate:
             return torch.stack(intermediate), torch.stack(
-                intermediate_reference_points)
+                intermediate_reference_points)  # 叠起来 *6
 
         return output, reference_points
 
