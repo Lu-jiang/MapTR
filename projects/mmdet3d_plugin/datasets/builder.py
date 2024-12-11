@@ -43,7 +43,7 @@ def build_dataloader(dataset,
     Returns:
         DataLoader: A PyTorch dataloader.
     """
-    rank, world_size = get_dist_info()
+    rank, world_size = get_dist_info()  # 分布式中进程都有唯一rank id，从0到world_size-1，world_size是分布式环境中进程总数
     if dist:
         # DistributedGroupSampler will definitely shuffle the data to satisfy
         # that images on each GPU are in the same group
@@ -72,14 +72,16 @@ def build_dataloader(dataset,
     else:
         # assert False, 'not support in bevformer'
         print('WARNING!!!!, Only can be used for obtain inference speed!!!!')
-        sampler = GroupSampler(dataset, samples_per_gpu) if shuffle else None
+        sampler = GroupSampler(dataset, samples_per_gpu) if shuffle else None   # 是否shuffle构建sample
         batch_size = num_gpus * samples_per_gpu
         num_workers = num_gpus * workers_per_gpu
 
+    # 初始化每个工作线程的随机数生成器, 保证可复现
     init_fn = partial(
         worker_init_fn, num_workers=num_workers, rank=rank,
         seed=seed) if seed is not None else None
 
+    # PyTorch data loader: 能按照设定的规则从给定的数据集对象中加载数据，以批次的形式提供给后续的模型训练、验证等
     data_loader = DataLoader(
         dataset,
         batch_size=batch_size,

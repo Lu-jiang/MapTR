@@ -139,10 +139,10 @@ class TemporalSelfAttention(BaseModule):
 
                 **kwargs):
         """Forward Function of MultiScaleDeformAttention.
-
+        时间维度上的自注意力计算，融合历史和当前的特征信息，输出经过时间自注意力处理后的特征表示
         Args:
             query (Tensor): Query of Transformer with shape
-                (num_query, bs, embed_dims).
+                (num_query, bs, embed_dims).    torch.Size([4, 20000, 256])
             key (Tensor): The key tensor with shape
                 `(num_key, bs, embed_dims)`.
             value (Tensor): The value tensor with shape
@@ -177,14 +177,14 @@ class TemporalSelfAttention(BaseModule):
         if value is None:
             assert self.batch_first
             bs, len_bev, c = query.shape
-            value = torch.stack([query, query], 1).reshape(bs*2, len_bev, c)
-
+            value = torch.stack([query, query], 1).reshape(bs*2, len_bev, c)    # torch.Size([8, 20000, 256])
+            # 在没有显式传入 value 时，默认将当前的 query 特征进行扩展作为 value 使用
             # value = torch.cat([query, query], 0)
-
+        # identity在后续的残差连接等操作中起到保留原始输入特征的作用，方便与经过一系列操作后的特征进行合并，实现类似残差网络的结构，有助于梯度传播和特征融合
         if identity is None:
             identity = query
         if query_pos is not None:
-            query = query + query_pos
+            query = query + query_pos   # 把位置信息融入查询向量中
         if not self.batch_first:
             # change to (bs, num_query ,embed_dims)
             query = query.permute(1, 0, 2)
@@ -194,40 +194,40 @@ class TemporalSelfAttention(BaseModule):
         assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
         assert self.num_bev_queue == 2
 
-        query = torch.cat([value[:bs], query], -1)
-        value = self.value_proj(value)
+        query = torch.cat([value[:bs], query], -1)  # torch.Size([4, 20000, 512])
+        value = self.value_proj(value)              # torch.Size([8, 20000, 256])
 
         if key_padding_mask is not None:
             value = value.masked_fill(key_padding_mask[..., None], 0.0)
 
         value = value.reshape(bs*self.num_bev_queue,
-                              num_value, self.num_heads, -1)
+                              num_value, self.num_heads, -1)    # torch.Size([8, 20000, 8, 32])
 
-        sampling_offsets = self.sampling_offsets(query)
-        sampling_offsets = sampling_offsets.view(
+        sampling_offsets = self.sampling_offsets(query)         # torch.Size([4, 20000, 128])
+        sampling_offsets = sampling_offsets.view(               # torch.Size([4, 20000, 8, 2, 1, 4, 2])
             bs, num_query, self.num_heads,  self.num_bev_queue, self.num_levels, self.num_points, 2)
-        attention_weights = self.attention_weights(query).view(
+        attention_weights = self.attention_weights(query).view( # torch.Size([4, 20000, 8, 2, 4])
             bs, num_query,  self.num_heads, self.num_bev_queue, self.num_levels * self.num_points)
         attention_weights = attention_weights.softmax(-1)
 
-        attention_weights = attention_weights.view(bs, num_query,
+        attention_weights = attention_weights.view(bs, num_query,   # torch.Size([4, 20000, 8, 2, 1, 4])
                                                    self.num_heads,
                                                    self.num_bev_queue,
                                                    self.num_levels,
                                                    self.num_points)
 
         attention_weights = attention_weights.permute(0, 3, 1, 2, 4, 5)\
-            .reshape(bs*self.num_bev_queue, num_query, self.num_heads, self.num_levels, self.num_points).contiguous()
+            .reshape(bs*self.num_bev_queue, num_query, self.num_heads, self.num_levels, self.num_points).contiguous()   # torch.Size([8, 20000, 8, 1, 4])
         sampling_offsets = sampling_offsets.permute(0, 3, 1, 2, 4, 5, 6)\
-            .reshape(bs*self.num_bev_queue, num_query, self.num_heads, self.num_levels, self.num_points, 2)
+            .reshape(bs*self.num_bev_queue, num_query, self.num_heads, self.num_levels, self.num_points, 2)             # torch.Size([8, 20000, 8, 1, 4, 2])
 
         if reference_points.shape[-1] == 2:
             offset_normalizer = torch.stack(
                 [spatial_shapes[..., 1], spatial_shapes[..., 0]], -1)
             sampling_locations = reference_points[:, :, None, :, None, :] \
                 + sampling_offsets \
-                / offset_normalizer[None, None, None, :, None, :]
-
+                / offset_normalizer[None, None, None, :, None, :]   # 在二维特征空间中实际要进行采样的坐标位置
+            # 二维坐标形式, torch.Size([8, 20000, 8, 1, 4, 2])
         elif reference_points.shape[-1] == 4:
             sampling_locations = reference_points[:, :, None, :, None, :2] \
                 + sampling_offsets / self.num_points \

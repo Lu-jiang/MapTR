@@ -103,6 +103,7 @@ def main():
     args = parse_args()
 
     cfg = Config.fromfile(args.config)
+    
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
     # import modules from string list.
@@ -111,6 +112,7 @@ def main():
         import_modules_from_strings(**cfg['custom_imports'])
 
     # import modules from plguin/xx, registry will be updated
+    # 动态插入自定义的模块，importlib.import_module(projects.mmdet3d_plugin), register -> dict
     if hasattr(cfg, 'plugin'):
         if cfg.plugin:
             import importlib
@@ -135,11 +137,15 @@ def main():
                 plg_lib = importlib.import_module(_module_path)
 
             from projects.mmdet3d_plugin.bevformer.apis.train import custom_train_model
+            
+            
     # set cudnn_benchmark
+    # 是否开启 CuDNN 的性能优化功能
     if cfg.get('cudnn_benchmark', False):
         torch.backends.cudnn.benchmark = True
 
     # work_dir is determined in this priority: CLI > segment in file > filename
+    # 训练过程中日志、模型等文件保存的工作目录
     if args.work_dir is not None:
         # update configs according to CLI args if args.work_dir is not None
         cfg.work_dir = args.work_dir
@@ -147,9 +153,10 @@ def main():
         # use config filename as default work_dir if cfg.work_dir is None
         cfg.work_dir = osp.join('./work_dirs',
                                 osp.splitext(osp.basename(args.config))[0])
+        
     # if args.resume_from is not None:
     if args.resume_from is not None and osp.isfile(args.resume_from):
-        cfg.resume_from = args.resume_from
+        cfg.resume_from = args.resume_from  # 恢复训练
     if args.gpu_ids is not None:
         cfg.gpu_ids = args.gpu_ids
     else:
@@ -161,6 +168,7 @@ def main():
         cfg.optimizer['lr'] = cfg.optimizer['lr'] * len(cfg.gpu_ids) / 8
 
     # init distributed env first, since logger depends on the dist info.
+    # 分布式
     if args.launcher == 'none':
         distributed = False
     else:
@@ -170,6 +178,7 @@ def main():
         _, world_size = get_dist_info()
         cfg.gpu_ids = range(world_size)
 
+    # 工作目录创建、配置保存及日志
     # create work_dir
     mmcv.mkdir_or_exist(osp.abspath(cfg.work_dir))
     # dump config
@@ -212,14 +221,19 @@ def main():
     meta['seed'] = args.seed
     meta['exp_name'] = osp.basename(args.config)
 
+    # 构建模型 && 初始化
     model = build_model(
         cfg.model,
         train_cfg=cfg.get('train_cfg'),
         test_cfg=cfg.get('test_cfg'))
-    model.init_weights()
+    model.init_weights()    # 对模型的权重进行初始化
 
     logger.info(f'Model:\n{model}')
+    
+    # 构建训练数据集
     datasets = [build_dataset(cfg.data.train)]
+    
+    # 构建验证数据集
     if len(cfg.workflow) == 2:
         val_dataset = copy.deepcopy(cfg.data.val)
         # in case we use a dataset wrapper
@@ -232,6 +246,7 @@ def main():
         # refer to https://mmdetection3d.readthedocs.io/en/latest/tutorials/customize_runtime.html#customize-workflow  # noqa
         val_dataset.test_mode = False
         datasets.append(build_dataset(val_dataset))
+
     if cfg.checkpoint_config is not None:
         # save mmdet version, config file content and class names in
         # checkpoints as meta data
@@ -243,8 +258,10 @@ def main():
             CLASSES=datasets[0].CLASSES,
             PALETTE=datasets[0].PALETTE  # for segmentors
             if hasattr(datasets[0], 'PALETTE') else None)
+        
     # add an attribute for visualization convenience
     model.CLASSES = datasets[0].CLASSES
+    
     custom_train_model(
         model,
         datasets,

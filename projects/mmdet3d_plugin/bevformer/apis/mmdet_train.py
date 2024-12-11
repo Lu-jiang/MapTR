@@ -36,8 +36,8 @@ def custom_train_detector(model,
     logger = get_root_logger(cfg.log_level)
 
     # prepare data loaders
-   
-    dataset = dataset if isinstance(dataset, (list, tuple)) else [dataset]
+    # 数据集
+    dataset = dataset if isinstance(dataset, (list, tuple)) else [dataset]  # True, len=1
     #assert len(dataset)==1s
     if 'imgs_per_gpu' in cfg.data:
         logger.warning('"imgs_per_gpu" is deprecated in MMDet V2.0. '
@@ -53,6 +53,7 @@ def custom_train_detector(model,
                 f'{cfg.data.imgs_per_gpu} in this experiments')
         cfg.data.samples_per_gpu = cfg.data.imgs_per_gpu
 
+    # 构建 data_loader
     data_loaders = [
         build_dataloader(
             ds,
@@ -68,6 +69,7 @@ def custom_train_detector(model,
     ]
 
     # put model on gpus
+    # 根据分布式布置模型到 gpus
     if distributed:
         find_unused_parameters = cfg.get('find_unused_parameters', False)
         # Sets the `find_unused_parameters` parameter in
@@ -90,10 +92,10 @@ def custom_train_detector(model,
             eval_model = MMDataParallel(
                 eval_model.cuda(cfg.gpu_ids[0]), device_ids=cfg.gpu_ids)
 
-
-    # build runner
+    # 构建优化器
     optimizer = build_optimizer(model, cfg.optimizer)
 
+    # build runner
     if 'runner' not in cfg:
         cfg.runner = {
             'type': 'EpochBasedRunner',
@@ -129,6 +131,7 @@ def custom_train_detector(model,
     runner.timestamp = timestamp
 
     # fp16 setting
+    # 混合精度训练: 使用半精度浮点数来加速计算并减少内存占用
     fp16_cfg = cfg.get('fp16', None)
     if fp16_cfg is not None:
         optimizer_config = Fp16OptimizerHook(
@@ -139,15 +142,18 @@ def custom_train_detector(model,
         optimizer_config = cfg.optimizer_config
 
     # register hooks
+    # 注册训练相关钩子函数
     runner.register_training_hooks(cfg.lr_config, optimizer_config,
                                    cfg.checkpoint_config, cfg.log_config,
                                    cfg.get('momentum_config', None))
     
     # register profiler hook
+    # 注册性能分析器钩子
     #trace_config = dict(type='tb_trace', dir_name='work_dir')
     #profiler_config = dict(on_trace_ready=trace_config)
     #runner.register_profiler_hook(profiler_config)
     
+    # 分布式训练下注册特定采样器种子钩子: 设置随机种子，保证可重复性
     if distributed:
         if isinstance(runner, EpochBasedRunner):
             runner.register_hook(DistSamplerSeedHook())

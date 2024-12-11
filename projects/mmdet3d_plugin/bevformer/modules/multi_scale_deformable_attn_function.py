@@ -94,7 +94,7 @@ class MultiScaleDeformableAttnFunction_fp32(Function):
     def forward(ctx, value, value_spatial_shapes, value_level_start_index,
                 sampling_locations, attention_weights, im2col_step):
         """GPU version of multi-scale deformable attention.
-
+        多尺度可变形注意力机制（Multi-Scale Deformable Attention）
         Args:
             value (Tensor): The value has shape
                 (bs, num_keys, mum_heads, embed_dims//num_heads)

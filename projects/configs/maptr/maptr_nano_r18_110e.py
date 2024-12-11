@@ -53,14 +53,15 @@ model = dict(
     type='MapTR',
     use_grid_mask=True,
     video_test_mode=False,
-    pretrained=dict(img='ckpts/resnet18-f37072fd.pth'),
+    pretrained=dict(img='ckpts/resnet50-19c8e357.pth'),
     img_backbone=dict(
         type='ResNet',
         depth=18,
         num_stages=4,
         out_indices=(3,),
         frozen_stages=-1,
-        norm_cfg=dict(type='SyncBN', requires_grad=True),
+        # norm_cfg=dict(type='SyncBN', requires_grad=True), # 多卡BN层
+        norm_cfg=dict(type='BN', requires_grad=True),    # 单卡BN层
         norm_eval=False,
         style='pytorch'),
     img_neck=dict(
@@ -231,8 +232,8 @@ test_pipeline = [
 ]
 
 data = dict(
-    samples_per_gpu=24,
-    workers_per_gpu=4,
+    samples_per_gpu=4,
+    workers_per_gpu=1,
     train=dict(
         type=dataset_type,
         data_root=data_root,

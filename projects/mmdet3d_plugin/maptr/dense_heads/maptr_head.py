@@ -146,14 +146,14 @@ class MapTRHead(DETRHead):
             cls_branch.append(Linear(self.embed_dims, self.embed_dims))
             cls_branch.append(nn.LayerNorm(self.embed_dims))
             cls_branch.append(nn.ReLU(inplace=True))
-        cls_branch.append(Linear(self.embed_dims, self.cls_out_channels))
+        cls_branch.append(Linear(self.embed_dims, self.cls_out_channels))   # 3分类
         fc_cls = nn.Sequential(*cls_branch)
 
         reg_branch = []
         for _ in range(self.num_reg_fcs):
             reg_branch.append(Linear(self.embed_dims, self.embed_dims))
             reg_branch.append(nn.ReLU())
-        reg_branch.append(Linear(self.embed_dims, self.code_size))
+        reg_branch.append(Linear(self.embed_dims, self.code_size))          # 2回归
         reg_branch = nn.Sequential(*reg_branch)
 
         def _get_clones(module, N):
@@ -165,8 +165,8 @@ class MapTRHead(DETRHead):
             self.as_two_stage else self.transformer.decoder.num_layers
 
         if self.with_box_refine:
-            self.cls_branches = _get_clones(fc_cls, num_pred)
-            self.reg_branches = _get_clones(reg_branch, num_pred)
+            self.cls_branches = _get_clones(fc_cls, num_pred)       # out channel: 3
+            self.reg_branches = _get_clones(reg_branch, num_pred)   # out channel: 2
         else:
             self.cls_branches = nn.ModuleList(
                 [fc_cls for _ in range(num_pred)])
@@ -176,7 +176,7 @@ class MapTRHead(DETRHead):
         if not self.as_two_stage:
             if self.bev_encoder_type == 'BEVFormerEncoder':
                 self.bev_embedding = nn.Embedding(
-                    self.bev_h * self.bev_w, self.embed_dims)
+                    self.bev_h * self.bev_w, self.embed_dims)   # Embedding(20000, 256)
             else:
                 self.bev_embedding = None
             if self.query_embed_type == 'all_pts':
@@ -184,8 +184,8 @@ class MapTRHead(DETRHead):
                                                     self.embed_dims * 2)
             elif self.query_embed_type == 'instance_pts':
                 self.query_embedding = None
-                self.instance_embedding = nn.Embedding(self.num_vec, self.embed_dims * 2)
-                self.pts_embedding = nn.Embedding(self.num_pts_per_vec, self.embed_dims * 2)
+                self.instance_embedding = nn.Embedding(self.num_vec, self.embed_dims * 2)       # Embedding(50, 512)
+                self.pts_embedding = nn.Embedding(self.num_pts_per_vec, self.embed_dims * 2)    # Embedding(20, 512)
 
     def init_weights(self):
         """Initialize weights of the DeformDETR head."""
@@ -217,21 +217,21 @@ class MapTRHead(DETRHead):
                 Shape [nb_dec, bs, num_query, 9].
         """
 
-        bs, num_cam, _, _, _ = mlvl_feats[0].shape
-        dtype = mlvl_feats[0].dtype
+        bs, num_cam, _, _, _ = mlvl_feats[0].shape  # torch.Size([4, 6, 256, 15, 25])
+        dtype = mlvl_feats[0].dtype                 # torch.float32
         # import pdb;pdb.set_trace()
         if self.query_embed_type == 'all_pts':
             object_query_embeds = self.query_embedding.weight.to(dtype)
         elif self.query_embed_type == 'instance_pts':
-            pts_embeds = self.pts_embedding.weight.unsqueeze(0)
-            instance_embeds = self.instance_embedding.weight.unsqueeze(1)
-            object_query_embeds = (pts_embeds + instance_embeds).flatten(0, 1).to(dtype)
+            pts_embeds = self.pts_embedding.weight.unsqueeze(0)             # torch.Size([1, 20, 512])
+            instance_embeds = self.instance_embedding.weight.unsqueeze(1)   # torch.Size([50, 1, 512])
+            object_query_embeds = (pts_embeds + instance_embeds).flatten(0, 1).to(dtype)    # torch.Size([1000, 512])
         if self.bev_embedding is not None:
-            bev_queries = self.bev_embedding.weight.to(dtype)
+            bev_queries = self.bev_embedding.weight.to(dtype)   # torch.Size([20000, 256])
 
             bev_mask = torch.zeros((bs, self.bev_h, self.bev_w),
-                                device=bev_queries.device).to(dtype)
-            bev_pos = self.positional_encoding(bev_mask).to(dtype)
+                                device=bev_queries.device).to(dtype)    # torch.Size([4, 200, 100])
+            bev_pos = self.positional_encoding(bev_mask).to(dtype)      # torch.Size([4, 256, 200, 100])
         else:
             bev_queries = None
             bev_mask = None
@@ -266,13 +266,13 @@ class MapTRHead(DETRHead):
                 img_metas=img_metas,
                 prev_bev=prev_bev
         )
-
+        # bev_embed:torch.Size([20000, 4, 256])   hs:torch.Size([6, 1000, 4, 256])   init_reference:torch.Size([4, 1000, 2])  initer_references:torch.Size([6, 4, 1000, 2])
         bev_embed, hs, init_reference, inter_references = outputs
-        hs = hs.permute(0, 2, 1, 3)
+        hs = hs.permute(0, 2, 1, 3) # torch.Size([6, 4, 1000, 256]) queries, 6层
         outputs_classes = []
         outputs_coords = []
         outputs_pts_coords = []
-        for lvl in range(hs.shape[0]):
+        for lvl in range(hs.shape[0]):  # 循环处理6层
             if lvl == 0:
                 # import pdb;pdb.set_trace()
                 reference = init_reference
@@ -283,8 +283,8 @@ class MapTRHead(DETRHead):
             # vec_embedding = hs[lvl].reshape(bs, self.num_vec, -1)
             outputs_class = self.cls_branches[lvl](hs[lvl]
                                             .view(bs,self.num_vec, self.num_pts_per_vec,-1)
-                                            .mean(2))
-            tmp = self.reg_branches[lvl](hs[lvl])
+                                            .mean(2))   # 分类：torch.Size([4, 50, 3])
+            tmp = self.reg_branches[lvl](hs[lvl])   # 回归xy， torch.Size([4, 1000, 2])
 
             # TODO: check the shape of reference
             assert reference.shape[-1] == 2
@@ -299,13 +299,13 @@ class MapTRHead(DETRHead):
             # tmp = tmp.reshape(bs, self.num_vec,-1)
             # TODO: check if using sigmoid
             outputs_coord, outputs_pts_coord = self.transform_box(tmp)
-            outputs_classes.append(outputs_class)
-            outputs_coords.append(outputs_coord)
-            outputs_pts_coords.append(outputs_pts_coord)
+            outputs_classes.append(outputs_class)           # torch.Size([4, 50, 3])
+            outputs_coords.append(outputs_coord)            # torch.Size([4, 50, 4]) 
+            outputs_pts_coords.append(outputs_pts_coord)    # torch.Size([4, 50, 20, 2])
 
-        outputs_classes = torch.stack(outputs_classes)
-        outputs_coords = torch.stack(outputs_coords)
-        outputs_pts_coords = torch.stack(outputs_pts_coords)
+        outputs_classes = torch.stack(outputs_classes)      # torch.Size([6, 4, 50, 3])
+        outputs_coords = torch.stack(outputs_coords)        # torch.Size([6, 4, 50, 4])
+        outputs_pts_coords = torch.stack(outputs_pts_coords)# torch.Size([6, 4, 50, 20, 2])
         outs = {
             'bev_embed': bev_embed,
             'all_cls_scores': outputs_classes,
@@ -622,7 +622,7 @@ class MapTRHead(DETRHead):
             gt_bboxes_list (list[Tensor]): Ground truth bboxes for each image
                 with shape (num_gts, 4) in [tl_x, tl_y, br_x, br_y] format.
             gt_labels_list (list[Tensor]): Ground truth class indices for each
-                image with shape (num_gts, ).
+                image with shape (num_gts, ).   torch.Size([num_instance])
             preds_dicts:
                 all_cls_scores (Tensor): Classification score of all
                     decoder layers, has shape
@@ -648,9 +648,9 @@ class MapTRHead(DETRHead):
             f'for gt_bboxes_ignore setting to None.'
         gt_vecs_list = copy.deepcopy(gt_bboxes_list)
         # import pdb;pdb.set_trace()
-        all_cls_scores = preds_dicts['all_cls_scores']
-        all_bbox_preds = preds_dicts['all_bbox_preds']
-        all_pts_preds  = preds_dicts['all_pts_preds']
+        all_cls_scores = preds_dicts['all_cls_scores']  # torch.Size([6, 4, 50, 3])
+        all_bbox_preds = preds_dicts['all_bbox_preds']  # torch.Size([6, 4, 50, 4])
+        all_pts_preds  = preds_dicts['all_pts_preds']   # torch.Size([6, 4, 50, 20, 2])
         enc_cls_scores = preds_dicts['enc_cls_scores']
         enc_bbox_preds = preds_dicts['enc_bbox_preds']
         enc_pts_preds  = preds_dicts['enc_pts_preds']
@@ -665,9 +665,9 @@ class MapTRHead(DETRHead):
         # gt_bboxes_list = [
         #     gt_bboxes.to(device) for gt_bboxes in gt_bboxes_list]
         gt_bboxes_list = [
-            gt_bboxes.bbox.to(device) for gt_bboxes in gt_vecs_list]
+            gt_bboxes.bbox.to(device) for gt_bboxes in gt_vecs_list]    # len=4, each=torch.Size([num_ins, 4]) TODO: bbox有用吗？
         gt_pts_list = [
-            gt_bboxes.fixed_num_sampled_points.to(device) for gt_bboxes in gt_vecs_list]
+            gt_bboxes.fixed_num_sampled_points.to(device) for gt_bboxes in gt_vecs_list]    # len=4, each=torch.Size([num_ins, 20, 2])
         if self.gt_shift_pts_pattern == 'v0':
             gt_shifts_pts_list = [
                 gt_bboxes.shift_fixed_num_sampled_points.to(device) for gt_bboxes in gt_vecs_list]
@@ -676,7 +676,7 @@ class MapTRHead(DETRHead):
                 gt_bboxes.shift_fixed_num_sampled_points_v1.to(device) for gt_bboxes in gt_vecs_list]
         elif self.gt_shift_pts_pattern == 'v2':
             gt_shifts_pts_list = [
-                gt_bboxes.shift_fixed_num_sampled_points_v2.to(device) for gt_bboxes in gt_vecs_list]
+                gt_bboxes.shift_fixed_num_sampled_points_v2.to(device) for gt_bboxes in gt_vecs_list]   # len=4, each=torch.Size([num_ins, num_shift, 20, 2]), such as torch.Size([11, 38, 20, 2])
         elif self.gt_shift_pts_pattern == 'v3':
             gt_shifts_pts_list = [
                 gt_bboxes.shift_fixed_num_sampled_points_v3.to(device) for gt_bboxes in gt_vecs_list]
@@ -685,7 +685,7 @@ class MapTRHead(DETRHead):
                 gt_bboxes.shift_fixed_num_sampled_points_v4.to(device) for gt_bboxes in gt_vecs_list]
         else:
             raise NotImplementedError
-        all_gt_bboxes_list = [gt_bboxes_list for _ in range(num_dec_layers)]
+        all_gt_bboxes_list = [gt_bboxes_list for _ in range(num_dec_layers)]    # 将gt复制到每一层
         all_gt_labels_list = [gt_labels_list for _ in range(num_dec_layers)]
         all_gt_pts_list = [gt_pts_list for _ in range(num_dec_layers)]
         all_gt_shifts_pts_list = [gt_shifts_pts_list for _ in range(num_dec_layers)]
